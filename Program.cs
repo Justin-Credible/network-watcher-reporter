@@ -18,6 +18,7 @@ namespace network_watcher_reporter
             if (args.Length != 5)
             {
                 Log($"Exiting; expecting 5 arguments, but received {args.Length}.");
+                FlushLogs();
                 return;
             }
 
@@ -36,6 +37,7 @@ namespace network_watcher_reporter
             if (!String.IsNullOrEmpty(userText))
             {
                 Log($"Exiting; device is assumed as known because user text was present, so no need to report.");
+                FlushLogs();
                 return;
             }
 
@@ -48,6 +50,7 @@ namespace network_watcher_reporter
             if (String.IsNullOrEmpty(pushOverApiUrl) || String.IsNullOrEmpty(pushOverToken) || String.IsNullOrEmpty(pushOverUser))
             {
                 Log("Exiting; PushOver.net API URL, token, or user ID not set in app.config.");
+                FlushLogs();
                 return;
             }
 
@@ -105,19 +108,63 @@ Company: {adapterCompany}");
             {
                 Log($"Exception: {exception.Message} / Status Code: {statusCode} / Body: {responseBody}");
             }
+
+            FlushLogs();
         }
+
+        private static List<string> _logs = new List<string>();
 
         private static void Log(string message)
         {
-            var path = ConfigurationSettings.AppSettings["log-path"];
+            var logEntry = "[" + DateTime.Now.ToString() + "] " + message;
 
-            if (String.IsNullOrEmpty(path))
-                path = "C:\\network-watcher-reporter.log";
+            Console.WriteLine(logEntry);
+            _logs.Add(logEntry);
+        }
 
-            var logEntry = "[" + DateTime.Now.ToString() + "] " + message + Environment.NewLine;
+        private static void FlushLogs()
+        {
+            if (_logs.Count == 0)
+            {
+                return;
+            }
 
-            File.AppendAllText(path, logEntry);
-            Console.Write(logEntry);
+            // Network watcher will spawn multiple instances of this program
+            // and we don't want to throw an exception if the log file is being
+            // writen by another instance. We'll retry the write to disk 5 times.
+
+            var maxAttempts = 5;
+
+            for (var i = 0; i < maxAttempts; i++)
+            {
+                try
+                {
+                    var path = ConfigurationSettings.AppSettings["log-path"];
+
+                    if (String.IsNullOrEmpty(path))
+                        path = "C:\\network-watcher-reporter.log";
+
+                    var logFileContents = String.Join(Environment.NewLine, _logs);
+                    File.AppendAllText(path, logFileContents);
+
+                    _logs.Clear();
+
+                    // We're good; bail out.
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine($"An error occurred while attempting to write log file during attempt {i+1}/{maxAttempts}: {exception.Message}");
+                    System.Threading.Thread.Sleep(1);
+                }
+
+                // Keep the console open so we can examine the log content.
+                if (i == maxAttempts-1)
+                {
+                    Console.WriteLine($"Unable to write to disk after {maxAttempts} attempts, giving up! Press any key to continue.");
+                    Console.ReadKey();
+                }
+            }
         }
     }
 }
